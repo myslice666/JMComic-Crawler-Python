@@ -31,8 +31,8 @@ plugins:
       kwargs:
         pdf_dir: ${JM_DOWNLOAD_DIR}/pdf/
         filename_rule: Aname  # 使用本子名称命名，A 开头表示 album
-        encrypt:
-          password: ${PDF_PASSWORD}
+        #encrypt:
+          #password: ${PDF_PASSWORD}
   after_download: # 全部下载完成以后
     - plugin: send_qq_email # 发送邮件，如果未配置下面的前3个环境变量则不会发送。
       kwargs:
