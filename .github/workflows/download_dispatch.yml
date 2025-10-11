@@ -94,7 +94,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-
+          pip install img2pdf  #自己修改添加pdf插件！
       - name: 安装jmcomic（pip）
         if: ${{ github.ref != 'refs/heads/dev' }}
         run: |
