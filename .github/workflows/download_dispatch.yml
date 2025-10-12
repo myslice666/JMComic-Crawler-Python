@@ -30,15 +30,18 @@ on:
         description: 下载文件夹规则（dir_rule.rule）。默认使用配置文件的 'Bd_Aauthor_Atitle_Pindex'。
         default: ''
         required: false
-        ##只有pdf
         
-      PDF_ONLY:
-        type: boolean
-        description: 只保留PDF文件（不保留原始图片）
-        default: true
-        required: false
+      # ⭐ 修改：改为选择类型
+      OUTPUT_FORMAT:
+        type: choice
+        description: 输出格式选择
+        options:
+          - 只保留PDF（删除原图）
+          - 只保留原图（不转PDF）
+        default: 只保留PDF（删除原图）
+        required: true
 
-          # 邮件选项
+      # 邮件选项
       EMAIL_TO_INPUT:
         type: string
         description: 收件人邮箱（可选，不填则不发送邮件）
@@ -57,18 +60,6 @@ on:
         description: 上传文件名称
         required: false
 
-#      JM_USERNAME:
-#        type: string
-#        default: ''
-#        description: '禁漫帐号（不建议使用，用户名和密码会泄露在日志中。最好用secrets）'
-#        required: false
-#
-#      JM_PASSWORD:
-#        type: string
-#        default: ''
-#        description: '禁漫密码（不建议使用，用户名和密码会泄露在日志中。最好用secrets）'
-#        required: false
-
 
 jobs:
   crawler:
@@ -82,7 +73,7 @@ jobs:
       ZIP_NAME: ${{ github.event.inputs.ZIP_NAME }}
       UPLOAD_NAME: ${{ github.event.inputs.UPLOAD_NAME }}
       IMAGE_SUFFIX: ${{ github.event.inputs.IMAGE_SUFFIX }}
-      PDF_ONLY: ${{ github.event.inputs.PDF_ONLY }}     #pdf
+      OUTPUT_FORMAT: ${{ github.event.inputs.OUTPUT_FORMAT }}
       
       # 登录相关secrets
       JM_USERNAME: ${{ secrets.JM_USERNAME }}
@@ -90,9 +81,7 @@ jobs:
 
       # 邮件相关secrets
       EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-      #EMAIL_TO: ${{ secrets.EMAIL_TO }}   原来的，只使用secret里面的
       EMAIL_TO: ${{ github.event.inputs.EMAIL_TO_INPUT || secrets.EMAIL_TO }}
-      # 邮件相关 - 优先使用输入框的邮箱，其次使用secrets
       EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
       EMAIL_TITLE: ${{ secrets.EMAIL_TITLE }}
       EMAIL_CONTENT: ${{ secrets.EMAIL_CONTENT }}
@@ -111,7 +100,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          pip install img2pdf  #自己修改添加pdf插件！
+          # ⭐ 只在需要PDF时安装 img2pdf
+          if [ "$OUTPUT_FORMAT" == "只保留PDF（删除原图）" ]; then
+            pip install img2pdf
+            echo "✅ 已安装 img2pdf 插件"
+          else
+            echo "ℹ️ 跳过 img2pdf 安装（只保留原图模式）"
+          fi
           
       - name: 安装jmcomic（pip）
         if: ${{ github.ref != 'refs/heads/dev' }}
@@ -123,7 +118,6 @@ jobs:
         run: |
           pip install -e ./
           
-      # ⭐ 添加：检查邮件配置
       - name: 检查邮件配置
         run: |
           echo "========================================"
@@ -162,48 +156,105 @@ jobs:
           
           echo "========================================"
           
-          # 检查是否满足发送条件
           if [ -z "$EMAIL_FROM" ] || [ -z "$EMAIL_TO" ] || [ -z "$EMAIL_PASS" ]; then
             echo "⚠️  警告: 邮件配置不完整，将不会发送邮件"
           else
             echo "✅ 邮件配置完整，下载完成后将发送邮件"
           fi
           
+      # ⭐ 修改配置文件，根据选项决定是否启用PDF转换
+      - name: 配置输出格式
+        run: |
+          echo "========================================"
+          echo "⚙️  输出格式配置"
+          echo "========================================"
+          echo "当前选择: $OUTPUT_FORMAT"
+          
+          if [ "$OUTPUT_FORMAT" == "只保留原图（不转PDF）" ]; then
+            echo "ℹ️ 禁用 img2pdf 插件..."
+            # 注释掉配置文件中的 img2pdf 插件
+            sed -i 's/^  after_album:/#  after_album:/g' assets/option/option_workflow_download.yml
+            sed -i 's/^    - plugin: img2pdf/#    - plugin: img2pdf/g' assets/option/option_workflow_download.yml
+            sed -i 's/^      kwargs:/#      kwargs:/g' assets/option/option_workflow_download.yml
+            sed -i 's/^        pdf_dir:/#        pdf_dir:/g' assets/option/option_workflow_download.yml
+            sed -i 's/^        filename_rule:/#        filename_rule:/g' assets/option/option_workflow_download.yml
+            echo "✅ 已禁用 PDF 转换，将只保留原始图片"
+          else
+            echo "✅ 启用 PDF 转换模式"
+          fi
+          echo "========================================"
+          
       - name: 运行下载脚本
         run: |
           cd ./usage/
           python workflow_download.py
           
-      - name: 处理PDF选项
-        if: ${{ github.event.inputs.PDF_ONLY == 'true' }}
+      # ⭐ 修改：根据选项处理文件
+      - name: 处理输出文件
         run: |
           cd $JM_DOWNLOAD_DIR
-          # 只保留PDF，删除原始图片
-          find . -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" -o -name "*.webp" \) -delete
-          rm -f 【出错了】*.log
-          find . -type d -empty -delete
-          echo "✅ 已清理原始图片，只保留PDF"
-          # ⭐ 检查PDF文件
           
-      - name: 检查PDF文件
+          if [ "$OUTPUT_FORMAT" == "只保留PDF（删除原图）" ]; then
+            echo "========================================"
+            echo "🗑️  清理原始图片（只保留PDF）"
+            echo "========================================"
+            
+            # 删除原始图片
+            find . -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" -o -name "*.webp" \) -delete
+            rm -f 【出错了】*.log
+            find . -type d -empty -delete
+            
+            echo "✅ 已清理原始图片，只保留PDF"
+            
+          elif [ "$OUTPUT_FORMAT" == "只保留原图（不转PDF）" ]; then
+            echo "========================================"
+            echo "🗑️  清理PDF文件（只保留原图）"
+            echo "========================================"
+            
+            # 删除PDF目录
+            if [ -d "pdf" ]; then
+              rm -rf pdf
+              echo "✅ 已删除 PDF 目录"
+            else
+              echo "ℹ️ PDF 目录不存在（符合预期）"
+            fi
+            
+            echo "✅ 保留原始图片，未生成PDF"
+          fi
+          
+          echo "========================================"
+          
+      - name: 检查最终文件
         run: |
           echo "========================================"
-          echo "📄 PDF文件检查"
+          echo "📁 最终文件检查"
           echo "========================================"
           
-          if [ -d "$JM_DOWNLOAD_DIR/pdf" ]; then
-            PDF_COUNT=$(find $JM_DOWNLOAD_DIR/pdf -name "*.pdf" | wc -l)
-            echo "PDF文件数量: $PDF_COUNT"
-            echo ""
-            echo "PDF文件列表:"
-            find $JM_DOWNLOAD_DIR/pdf -name "*.pdf" -exec ls -lh {} \;
-            echo ""
-            echo "总大小: $(du -sh $JM_DOWNLOAD_DIR/pdf | cut -f1)"
+          cd $JM_DOWNLOAD_DIR
+          
+          if [ "$OUTPUT_FORMAT" == "只保留PDF（删除原图）" ]; then
+            if [ -d "pdf" ]; then
+              PDF_COUNT=$(find pdf -name "*.pdf" 2>/dev/null | wc -l)
+              echo "📄 PDF文件数量: $PDF_COUNT"
+              echo ""
+              echo "PDF文件列表:"
+              find pdf -name "*.pdf" -exec ls -lh {} \; 2>/dev/null || echo "无PDF文件"
+              echo ""
+              echo "PDF总大小: $(du -sh pdf 2>/dev/null | cut -f1 || echo '0')"
+            else
+              echo "❌ PDF目录不存在"
+            fi
           else
-            echo "❌ PDF目录不存在"
+            IMAGE_COUNT=$(find . -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" -o -name "*.webp" \) 2>/dev/null | wc -l)
+            echo "🖼️  图片文件数量: $IMAGE_COUNT"
+            echo ""
+            echo "下载目录结构:"
+            tree -L 2 -h . 2>/dev/null || ls -lhR .
+            echo ""
+            echo "总大小: $(du -sh . | cut -f1)"
           fi
+          
           echo "========================================"
-
 
       - name: 压缩文件
         run: |
@@ -219,10 +270,9 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           
-         # ⭐ 新增：发送邮件（带 PDF 附件）
       - name: 发送邮件通知
         if: ${{ env.EMAIL_TO != '' && env.EMAIL_FROM != '' && env.EMAIL_PASS != '' }}
-        continue-on-error: true  # 邮件失败不影响主流程
+        continue-on-error: true
         run: |
           echo "📧 准备发送邮件..."
           python assets/send_email_with_pdf.py
