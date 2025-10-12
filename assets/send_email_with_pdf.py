@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 QQ 邮箱附件发送脚本
-支持 PDF 模式和原图模式的邮件发送
+支持 PDF 模式和原图模式的邮件发送（原图模式仅展示本子名称）
 """
 
 import os
@@ -34,8 +34,8 @@ EMAIL_TO = os.getenv('EMAIL_TO', '')
 EMAIL_PASS = os.getenv('EMAIL_PASS', '')
 EMAIL_TITLE = os.getenv('EMAIL_TITLE', '')
 EMAIL_CONTENT = os.getenv('EMAIL_CONTENT', '')
-OUTPUT_FORMAT = os.getenv('OUTPUT_FORMAT', 'pdf_only')  # 新增：输出格式
-ZIP_NAME = os.getenv('ZIP_NAME', '本子.tar.gz')  # 新增：从环境变量读取压缩包名称
+OUTPUT_FORMAT = os.getenv('OUTPUT_FORMAT', 'pdf_only')  # 输出格式
+ZIP_NAME = os.getenv('ZIP_NAME', '本子.tar.gz')  # 从环境变量读取压缩包名称
 
 
 def log(message, level='INFO'):
@@ -51,7 +51,7 @@ def get_file_size_mb(file_path):
 
 
 def scan_files(base_dir, file_extensions):
-    """扫描指定扩展名的文件并返回文件信息列表"""
+    """扫描指定扩展名的文件并返回文件信息列表（用于PDF模式）"""
     base_path = Path(base_dir)
     if not base_path.exists():
         log(f"目录不存在: {base_dir}", 'WARNING')
@@ -71,18 +71,64 @@ def scan_files(base_dir, file_extensions):
     return file_info
 
 
-def scan_pdf_files(pdf_dir):
-    """扫描 PDF 文件"""
-    return scan_files(pdf_dir, ['pdf'])
-
-
-def scan_image_files(image_dir):
-    """扫描图片文件"""
-    return scan_files(image_dir, ['jpg', 'jpeg', 'png', 'webp'])
+def get_album_info(base_dir):
+    """从下载目录提取本子信息（名称、图片数量、总大小）- 用于原图模式"""
+    base_path = Path(base_dir)
+    if not base_path.exists():
+        log(f"目录不存在: {base_dir}", 'WARNING')
+        return []
+    
+    album_list = []
+    # 按 dir_rule: Bd_Aauthor_Atitle_Pindex 匹配本子目录（含Aauthor/Atitle）
+    for album_dir in base_path.glob('*_A*_*'):
+        if not album_dir.is_dir():
+            continue
+        
+        # 解析本子名称：从目录名分割结果中提取Atitle
+        dir_parts = album_dir.name.split('_')
+        atitle_index = None
+        
+        # 优先匹配明确的Atitle片段
+        for i, part in enumerate(dir_parts):
+            if part.startswith('A') and 'title' in part.lower():
+                atitle_index = i
+                break
+        
+        # 兼容无明确Atitle的情况（取Aauthor后的片段）
+        if atitle_index is None:
+            for i, part in enumerate(dir_parts):
+                if part.startswith('Aauthor'):
+                    atitle_index = i + 1
+                    break
+        
+        # 处理本子名称（默认"未知本子"）
+        album_name = '未知本子'
+        if atitle_index and atitle_index < len(dir_parts):
+            # 拼接Atitle片段，排除Pindex（章节号）
+            album_name = '_'.join([p for p in dir_parts[atitle_index:] if not p.startswith('P')])
+        
+        # 统计当前本子的图片信息
+        image_extensions = ['.jpg', '.jpeg', '.png', '.webp']
+        image_files = [f for f in album_dir.rglob('*') if f.suffix.lower() in image_extensions]
+        if not image_files:
+            continue
+        
+        # 计算图片总数和总大小
+        total_image_count = len(image_files)
+        total_size_mb = round(sum(f.stat().st_size for f in image_files) / (1024 * 1024), 1)
+        
+        album_list.append({
+            'name': album_name,
+            'image_count': total_image_count,
+            'total_size_mb': total_size_mb,
+            'dir_path': str(album_dir)
+        })
+    
+    return album_list
 
 
 def create_pdf_zip(pdf_dir, output_path):
-    """将 PDF 目录打包为 ZIP"""
+    """将 PDF 目录打包为 ZIP（PDF模式专用）"""
     log(f"开始打包 PDF 文件...")
     
     pdf_path = Path(pdf_dir)
@@ -91,11 +137,11 @@ def create_pdf_zip(pdf_dir, output_path):
         return False
     
     try:
-        # 删除旧的 ZIP 文件
+        # 删除旧ZIP文件
         if os.path.exists(output_path):
             os.remove(output_path)
         
-        # 创建新的 ZIP
+        # 创建新ZIP
         zip_base = str(Path(output_path).with_suffix(''))
         shutil.make_archive(zip_base, 'zip', pdf_dir)
         
@@ -112,20 +158,20 @@ def build_email_content_pdf(pdf_files, zip_size_mb, is_large_file, zip_name):
     """构建 PDF 模式的邮件正文"""
     today = datetime.now().strftime('%Y-%m-%d')
     
-    # 构建标题
+    # 标题
     if EMAIL_TITLE:
         title = EMAIL_TITLE
     else:
         pdf_count = len(pdf_files)
         title = f"禁漫PDF已生成（共 {pdf_count} 本 · {today}）"
     
-    # 构建正文
+    # 正文
     if EMAIL_CONTENT:
         content = EMAIL_CONTENT + "\n\n"
     else:
         content = "✅ 你的禁漫 PDF 文件已准备就绪！\n\n"
     
-    # 添加文件列表
+    # PDF文件列表
     if pdf_files:
         content += f"{'=' * 50}\n"
         content += f"📚 共 {len(pdf_files)} 本 PDF：\n"
@@ -134,7 +180,7 @@ def build_email_content_pdf(pdf_files, zip_size_mb, is_large_file, zip_name):
             content += f"  • {file_info['name']} ({file_info['size_mb']} MB)\n"
         content += f"{'=' * 50}\n\n"
     
-    # 根据文件大小添加不同的提示
+    # 压缩包提示
     if is_large_file:
         content += f"⚠️ 附件超过 {ATTACH_LIMIT_MB} MB，请前往 GitHub Actions 的 Artifacts 下载\n"
         content += f"📦 ZIP 大小: {zip_size_mb} MB\n"
@@ -146,46 +192,50 @@ def build_email_content_pdf(pdf_files, zip_size_mb, is_large_file, zip_name):
     return title, content
 
 
-def build_email_content_images(image_files, archive_size_mb, is_large_file, archive_name):
-    """构建原图模式的邮件正文"""
+def build_email_content_images(album_list, archive_size_mb, is_large_file, archive_name):
+    """构建原图模式的邮件正文（仅展示本子名称）"""
     today = datetime.now().strftime('%Y-%m-%d')
+    total_album_count = len(album_list)
+    total_image_count = sum(album['image_count'] for album in album_list)
     
-    # 构建标题
+    # 标题（对齐PDF模式风格）
     if EMAIL_TITLE:
         title = EMAIL_TITLE
     else:
-        title = f"禁漫原图已下载（{today}）"
+        title = f"禁漫原图已下载（共 {total_album_count} 本 · {today}）"
     
-    # 构建正文
+    # 正文
     if EMAIL_CONTENT:
         content = EMAIL_CONTENT + "\n\n"
     else:
         content = "✅ 你的禁漫原图文件已准备就绪！\n\n"
     
-    # 添加统计信息
+    # 本子列表（仅展示本子名称+图片数量+总大小）
+    if album_list:
+        content += f"{'=' * 50}\n"
+        content += f"🖼️  共 {total_album_count} 本本子：\n"
+        content += f"{'=' * 50}\n"
+        for album in album_list:
+            content += f"  • {album['name']}（{album['image_count']} 张图 · {album['total_size_mb']} MB）\n"
+        content += f"{'=' * 50}\n\n"
+    
+    # 统计信息
     content += f"{'=' * 50}\n"
-    content += f"🖼️  原图模式统计：\n"
+    content += f"📊 原图模式统计：\n"
     content += f"{'=' * 50}\n"
-    content += f"  • 图片总数: {len(image_files)} 张\n"
-    
-    # 统计不同格式的图片
-    formats = {}
-    for img in image_files:
-        ext = Path(img['name']).suffix.lower()
-        formats[ext] = formats.get(ext, 0) + 1
-    
-    for ext, count in sorted(formats.items()):
-        content += f"  • {ext.upper()} 格式: {count} 张\n"
-    
+    content += f"  • 本子总数: {total_album_count} 本\n"
+    content += f"  • 图片总数: {total_image_count} 张\n"
+    content += f"  • 所有图片总大小: {sum(a['total_size_mb'] for a in album_list):.1f} MB\n"
     content += f"{'=' * 50}\n\n"
     
-    # 根据文件大小添加不同的提示
+    # 压缩包提示
     if is_large_file:
         content += f"⚠️ 压缩包超过 {ATTACH_LIMIT_MB} MB，请前往 GitHub Actions 的 Artifacts 下载\n"
         content += f"📦 压缩包: {archive_name} ({archive_size_mb} MB)\n"
     else:
         content += f"📦 附件已打包为 {archive_name} ({archive_size_mb} MB)\n"
     
+    # 统一结尾标识
     content += "\n—— GitHub Actions 自动服务"
     
     return title, content
@@ -204,7 +254,7 @@ def send_email(title, content, attachment_path=None, retry_count=0):
         # 添加正文
         msg.attach(MIMEText(content, 'plain', 'utf-8'))
         
-        # 添加附件（如果存在且不超过限制）
+        # 添加附件（不超过大小限制）
         if attachment_path and os.path.exists(attachment_path):
             attach_size_mb = get_file_size_mb(attachment_path)
             attach_name = Path(attachment_path).name
@@ -220,7 +270,7 @@ def send_email(title, content, attachment_path=None, retry_count=0):
                     )
                     msg.attach(attachment)
         
-        # 连接 SMTP 服务器并发送
+        # 连接SMTP服务器
         log("正在连接 SMTP 服务器...")
         smtp_conn = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=60)
         smtp_conn.login(EMAIL_FROM, EMAIL_PASS)
@@ -230,7 +280,7 @@ def send_email(title, content, attachment_path=None, retry_count=0):
         smtp_conn.send_message(msg)
         log("✅ 邮件发送成功")
         
-        # 关闭连接（忽略关闭时的错误）
+        # 关闭连接
         try:
             smtp_conn.quit()
         except:
@@ -245,14 +295,14 @@ def send_email(title, content, attachment_path=None, retry_count=0):
     except Exception as e:
         log(f"❌ 邮件发送失败: {e}", 'ERROR')
         
-        # 确保连接关闭
+        # 关闭连接
         if smtp_conn:
             try:
                 smtp_conn.quit()
             except:
                 pass
         
-        # 自动重试
+        # 重试逻辑
         if retry_count < MAX_RETRIES:
             retry_count += 1
             log(f"🔄 {RETRY_DELAY} 秒后进行第 {retry_count} 次重试...", 'WARNING')
@@ -267,17 +317,17 @@ def handle_pdf_mode():
     """处理 PDF 模式"""
     log("📄 当前模式: PDF 模式")
     
-    # 扫描 PDF 文件
+    # 扫描PDF文件
     pdf_dir = Path(JM_DOWNLOAD_DIR) / 'pdf'
     log(f"📁 扫描 PDF 目录: {pdf_dir}")
     
-    pdf_files = scan_pdf_files(pdf_dir)
+    pdf_files = scan_files(pdf_dir, ['pdf'])
     
     if not pdf_files:
         log("⚠️ 未找到 PDF 文件", 'WARNING')
         return None, None, None, []
     
-    # 显示文件列表
+    # 显示PDF列表
     log(f"✅ 找到 {len(pdf_files)} 个 PDF 文件:")
     total_size = 0
     for file_info in pdf_files:
@@ -285,7 +335,7 @@ def handle_pdf_mode():
         total_size += file_info['size_mb']
     log(f"📊 总大小: {total_size:.1f} MB")
     
-    # 打包 ZIP
+    # 打包ZIP
     zip_name = 'all_pdf.zip'
     zip_path = Path(JM_DOWNLOAD_DIR) / zip_name
     
@@ -293,7 +343,7 @@ def handle_pdf_mode():
         log("❌ 打包失败", 'ERROR')
         return None, None, None, pdf_files
     
-    # 检查 ZIP 大小
+    # 检查ZIP大小
     zip_size_mb = get_file_size_mb(zip_path)
     is_large_file = zip_size_mb > ATTACH_LIMIT_MB
     
@@ -305,45 +355,40 @@ def handle_pdf_mode():
 
 
 def handle_images_mode():
-    """处理原图模式"""
-    log("🖼️  当前模式: 原图模式")
+    """处理原图模式（仅展示本子名称）"""
+    log("🖼️ 当前模式: 原图模式")
     
-    # 使用 workflow 已生成的压缩包
-    archive_path = Path(JM_DOWNLOAD_DIR) / ZIP_NAME
+    # 提取本子信息（替代单张图片扫描）
+    log(f"📁 扫描本子目录: {JM_DOWNLOAD_DIR}")
+    album_list = get_album_info(JM_DOWNLOAD_DIR)
     
-    if not archive_path.exists():
-        log(f"⚠️ 未找到压缩包: {ZIP_NAME}", 'WARNING')
+    if not album_list:
+        log("⚠️ 未找到本子目录或图片", 'WARNING')
         return None, None, None, []
     
-    # 扫描图片文件（用于统计）
-    log(f"📁 扫描图片目录: {JM_DOWNLOAD_DIR}")
-    image_files = scan_image_files(JM_DOWNLOAD_DIR)
+    # 显示本子列表
+    log(f"✅ 找到 {len(album_list)} 本本子:")
+    for album in album_list:
+        log(f"  • {album['name']}（{album['image_count']} 张图 · {album['total_size_mb']} MB）")
+    total_image_size = sum(a['total_size_mb'] for a in album_list)
+    log(f"📊 本子总大小: {total_image_size:.1f} MB")
     
-    if not image_files:
-        log("⚠️ 未找到图片文件", 'WARNING')
-    else:
-        log(f"✅ 找到 {len(image_files)} 张图片")
-        
-        # 统计格式
-        formats = {}
-        for img in image_files:
-            ext = Path(img['name']).suffix.lower()
-            formats[ext] = formats.get(ext, 0) + 1
-        
-        for ext, count in sorted(formats.items()):
-            log(f"  • {ext.upper()}: {count} 张")
+    # 检查压缩包
+    archive_path = Path(JM_DOWNLOAD_DIR) / ZIP_NAME
+    if not archive_path.exists():
+        log(f"⚠️ 未找到压缩包: {ZIP_NAME}", 'WARNING')
+        return None, None, None, album_list
     
     # 检查压缩包大小
     archive_size_mb = get_file_size_mb(archive_path)
     is_large_file = archive_size_mb > ATTACH_LIMIT_MB
     
     log(f"📦 压缩包: {ZIP_NAME} ({archive_size_mb} MB)")
-    
     if is_large_file:
         log(f"⚠️ 压缩包过大 ({archive_size_mb} MB > {ATTACH_LIMIT_MB} MB)", 'WARNING')
         log("将发送通知邮件（不带附件）")
     
-    return archive_path, archive_size_mb, is_large_file, image_files
+    return archive_path, archive_size_mb, is_large_file, album_list
 
 
 def main():
@@ -356,15 +401,15 @@ def main():
     if not all([EMAIL_FROM, EMAIL_TO, EMAIL_PASS]):
         log("⚠️ 邮件配置不完整，跳过发送", 'WARNING')
         log("需要配置: EMAIL_FROM, EMAIL_TO, EMAIL_PASS")
-        return 0  # 返回 0（成功）以免中断 workflow
+        return 0
     
     log(f"📤 发件人: {EMAIL_FROM}")
     log(f"📥 收件人: {EMAIL_TO}")
     log(f"📦 输出模式: {OUTPUT_FORMAT}")
     
-    # 根据模式处理文件
+    # 根据模式处理
     if OUTPUT_FORMAT == 'images_only':
-        attachment_path, size_mb, is_large, files = handle_images_mode()
+        attachment_path, size_mb, is_large, album_list = handle_images_mode()
         
         if attachment_path is None:
             # 发送失败通知
@@ -373,13 +418,13 @@ def main():
             send_email(title, content)
             return 0
         
-        # 构建邮件内容
+        # 构建原图模式邮件内容
         title, content = build_email_content_images(
-            files, size_mb, is_large, ZIP_NAME
+            album_list, size_mb, is_large, ZIP_NAME
         )
         
     else:  # pdf_only
-        attachment_path, size_mb, is_large, files = handle_pdf_mode()
+        attachment_path, size_mb, is_large, pdf_files = handle_pdf_mode()
         
         if attachment_path is None:
             # 发送失败通知
@@ -388,16 +433,16 @@ def main():
             send_email(title, content)
             return 0
         
-        # 构建邮件内容
+        # 构建PDF模式邮件内容
         zip_name = Path(attachment_path).name
         title, content = build_email_content_pdf(
-            files, size_mb, is_large, zip_name
+            pdf_files, size_mb, is_large, zip_name
         )
     
     # 发送邮件
     log("=" * 60)
     if is_large:
-        success = send_email(title, content)  # 不附加文件
+        success = send_email(title, content)  # 超大文件不附加
     else:
         success = send_email(title, content, attachment_path)
     
@@ -408,7 +453,7 @@ def main():
         return 0
     else:
         log("⚠️ 邮件发送失败，但不影响主流程", 'WARNING')
-        return 0  # 返回 0 确保不中断 workflow
+        return 0
 
 
 if __name__ == '__main__':
@@ -422,4 +467,4 @@ if __name__ == '__main__':
         log(f"❌ 发生未预期的错误: {e}", 'ERROR')
         import traceback
         log(traceback.format_exc(), 'ERROR')
-        sys.exit(0)  # 返回 0 不中断 workflow
+        sys.exit(0)  # 返回0不中断workflow
