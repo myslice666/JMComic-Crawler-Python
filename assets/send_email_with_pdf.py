@@ -154,7 +154,7 @@ def build_email_content_images(image_dir, archive_size_mb, is_large_file, archiv
         content += f"{'=' * 50}\n\n"
 
     if is_large_file:
-        content += f"⚠️ 压缩包超过 {ATTACH_LIMIT_MB} MB，请前往 GitHub Actions 的 Artifacts 下载\n"
+        content += f"⚠️ 压缩包超过 {ATTACH_LIMIT_MB} MB，请前往 GitHub Actions 的 Artifacts（https://github.com/myslice666/JMComic-Crawler-Python/actions/workflows/download_dispatch.yml） 下载\n"
         content += f"📦 压缩包: {archive_name} ({archive_size_mb} MB)\n"
     else:
         content += f"📦 附件已打包为 {archive_name} ({archive_size_mb} MB)\n"
