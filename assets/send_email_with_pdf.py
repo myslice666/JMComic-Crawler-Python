@@ -21,8 +21,8 @@ from datetime import datetime
 # ============================================
 SMTP_HOST = 'smtp.qq.com'
 SMTP_PORT = 465
-ATTACH_LIMIT_MB = 1024  # QQ 邮箱附件大小限制（MB）
-MAX_RETRIES = 3  # 发送失败重试次数
+ATTACH_LIMIT_MB = 45  # QQ 邮箱附件大小限制（MB）
+MAX_RETRIES = 1  # 发送失败重试次数
 RETRY_DELAY = 3  # 重试间隔（秒）
 ZIP_NAME = 'all_pdf.zip'  # 压缩包名称
 
