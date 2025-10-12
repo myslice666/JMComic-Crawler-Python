@@ -34,8 +34,8 @@ EMAIL_TO = os.getenv('EMAIL_TO', '')
 EMAIL_PASS = os.getenv('EMAIL_PASS', '')
 EMAIL_TITLE = os.getenv('EMAIL_TITLE', '')
 EMAIL_CONTENT = os.getenv('EMAIL_CONTENT', '')
-OUTPUT_FORMAT = os.getenv('OUTPUT_FORMAT', 'pdf_only')  # 输出模式
-ZIP_NAME = os.getenv('ZIP_NAME', '本子.tar.gz')  # 压缩包名称
+OUTPUT_FORMAT = os.getenv('OUTPUT_FORMAT', 'pdf_only')  # 新增：输出格式
+ZIP_NAME = os.getenv('ZIP_NAME', '本子.tar.gz')  # 新增：从环境变量读取压缩包名称
 
 
 def log(message, level='INFO'):
@@ -147,7 +147,7 @@ def build_email_content_pdf(pdf_files, zip_size_mb, is_large_file, zip_name):
 
 
 def build_email_content_images(image_files, archive_size_mb, is_large_file, archive_name):
-    """构建原图模式的邮件正文（增加本子名称显示）"""
+    """构建原图模式的邮件正文（支持全名显示）"""
     today = datetime.now().strftime('%Y-%m-%d')
 
     # 构建标题
@@ -162,32 +162,16 @@ def build_email_content_images(image_files, archive_size_mb, is_large_file, arch
     else:
         content = "✅ 你的禁漫原图文件已准备就绪！\n\n"
 
-    # 添加本子列表
-    content += f"{'=' * 50}\n"
-    content += f"📚 本子列表：\n"
-    content += f"{'=' * 50}\n"
+    # 添加文件列表（本子全名及统计）
+    if image_files:
+        content += f"{'=' * 50}\n"
+        content += f"🖼️  原图模式统计：\n"
+        content += f"{'=' * 50}\n"
+        for file_info in image_files:
+            content += f"  • {file_info['name']} ({file_info['size_mb']} MB)\n"
+        content += f"{'=' * 50}\n\n"
 
-    base_path = Path(JM_DOWNLOAD_DIR)
-    albums = [p.name for p in base_path.iterdir() if p.is_dir()]
-    if not albums:
-        content += "⚠️ 未找到本子文件夹\n"
-    else:
-        for name in albums:
-            content += f"  • {name}\n"
-    content += f"{'=' * 50}\n\n"
-
-    # 添加统计信息
-    content += f"🖼️  图片总数: {len(image_files)} 张\n"
-    formats = {}
-    for img in image_files:
-        ext = Path(img['name']).suffix.lower()
-        formats[ext] = formats.get(ext, 0) + 1
-    for ext, count in sorted(formats.items()):
-        content += f"  • {ext.upper()} 格式: {count} 张\n"
-
-    content += f"{'=' * 50}\n\n"
-
-    # 根据文件大小添加提示
+    # 根据文件大小添加不同的提示
     if is_large_file:
         content += f"⚠️ 压缩包超过 {ATTACH_LIMIT_MB} MB，请前往 GitHub Actions 的 Artifacts 下载\n"
         content += f"📦 压缩包: {archive_name} ({archive_size_mb} MB)\n"
@@ -195,6 +179,7 @@ def build_email_content_images(image_files, archive_size_mb, is_large_file, arch
         content += f"📦 附件已打包为 {archive_name} ({archive_size_mb} MB)\n"
 
     content += "\n—— GitHub Actions 自动服务"
+
     return title, content
 
 
@@ -312,32 +297,38 @@ def handle_pdf_mode():
 
 
 def handle_images_mode():
-    """处理原图模式"""
+    """处理原图模式（支持全名显示）"""
     log("🖼️  当前模式: 原图模式")
 
-    # 使用 workflow 已生成的压缩包
     archive_path = Path(JM_DOWNLOAD_DIR) / ZIP_NAME
 
     if not archive_path.exists():
         log(f"⚠️ 未找到压缩包: {ZIP_NAME}", 'WARNING')
         return None, None, None, []
 
-    # 扫描图片文件（用于统计）
-    log(f"📁 扫描图片目录: {JM_DOWNLOAD_DIR}")
-    image_files = scan_image_files(JM_DOWNLOAD_DIR)
+    # 扫描每个本子文件夹
+    image_files = []
+    base_path = Path(JM_DOWNLOAD_DIR)
+    for subdir in sorted(base_path.iterdir()):
+        if subdir.is_dir():
+            # 本子名称取文件夹名（如果需要更深层可调整）
+            book_name = subdir.name
+            # 统计该本子图片大小
+            imgs = scan_image_files(subdir)
+            if not imgs:
+                continue
+            total_size = sum(f['size_mb'] for f in imgs)
+            image_files.append({
+                'name': book_name,
+                'size_mb': round(total_size, 1)
+            })
 
     if not image_files:
         log("⚠️ 未找到图片文件", 'WARNING')
     else:
-        log(f"✅ 找到 {len(image_files)} 张图片")
-        # 统计格式
-        formats = {}
-        for img in image_files:
-            ext = Path(img['name']).suffix.lower()
-            formats[ext] = formats.get(ext, 0) + 1
-
-        for ext, count in sorted(formats.items()):
-            log(f"  • {ext.upper()}: {count} 张")
+        log(f"✅ 找到 {len(image_files)} 本原图")
+        for f in image_files:
+            log(f"  • {f['name']} ({f['size_mb']} MB)")
 
     # 检查压缩包大小
     archive_size_mb = get_file_size_mb(archive_path)
