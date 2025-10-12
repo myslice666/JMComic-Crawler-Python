@@ -121,7 +121,53 @@ jobs:
         if: ${{ github.ref == 'refs/heads/dev' }}
         run: |
           pip install -e ./
-
+          
+      # ⭐ 添加：检查邮件配置
+      - name: 检查邮件配置
+        run: |
+          echo "========================================"
+          echo "📧 邮件配置检查"
+          echo "========================================"
+          
+          if [ -n "$EMAIL_FROM" ]; then
+            echo "✅ EMAIL_FROM: ${EMAIL_FROM:0:3}***@${EMAIL_FROM##*@}"
+          else
+            echo "❌ EMAIL_FROM: 未配置"
+          fi
+          
+          if [ -n "$EMAIL_TO" ]; then
+            echo "✅ EMAIL_TO: ${EMAIL_TO:0:3}***@${EMAIL_TO##*@}"
+          else
+            echo "❌ EMAIL_TO: 未配置（不会发送邮件）"
+          fi
+          
+          if [ -n "$EMAIL_PASS" ]; then
+            echo "✅ EMAIL_PASS: ${EMAIL_PASS:0:4}************"
+          else
+            echo "❌ EMAIL_PASS: 未配置"
+          fi
+          
+          if [ -n "$EMAIL_TITLE" ]; then
+            echo "✅ EMAIL_TITLE: $EMAIL_TITLE"
+          else
+            echo "⚠️  EMAIL_TITLE: 未配置（将使用默认标题）"
+          fi
+          
+          if [ -n "$EMAIL_CONTENT" ]; then
+            echo "✅ EMAIL_CONTENT: $EMAIL_CONTENT"
+          else
+            echo "⚠️  EMAIL_CONTENT: 未配置（将使用默认内容）"
+          fi
+          
+          echo "========================================"
+          
+          # 检查是否满足发送条件
+          if [ -z "$EMAIL_FROM" ] || [ -z "$EMAIL_TO" ] || [ -z "$EMAIL_PASS" ]; then
+            echo "⚠️  警告: 邮件配置不完整，将不会发送邮件"
+          else
+            echo "✅ 邮件配置完整，下载完成后将发送邮件"
+          fi
+          
       - name: 运行下载脚本
         run: |
           cd ./usage/
