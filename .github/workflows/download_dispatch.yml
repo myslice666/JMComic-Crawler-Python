@@ -31,15 +31,15 @@ on:
         default: ''
         required: false
         
-      # ⭐ 修改：改为选择类型
+      # ⭐ 修改：改为选择输出格式
       OUTPUT_FORMAT:
         type: choice
         description: 输出格式选择
-        options:
-          - 只保留PDF（删除原图）
-          - 只保留原图（不转PDF）
-        default: 只保留PDF（删除原图）
         required: true
+        default: 'pdf_only'
+        options:
+          - pdf_only       # 只保留PDF（删除原图）
+          - images_only    # 只保留原图（不转PDF）
 
       # 邮件选项
       EMAIL_TO_INPUT:
@@ -73,7 +73,7 @@ jobs:
       ZIP_NAME: ${{ github.event.inputs.ZIP_NAME }}
       UPLOAD_NAME: ${{ github.event.inputs.UPLOAD_NAME }}
       IMAGE_SUFFIX: ${{ github.event.inputs.IMAGE_SUFFIX }}
-      OUTPUT_FORMAT: ${{ github.event.inputs.OUTPUT_FORMAT }}
+      OUTPUT_FORMAT: ${{ github.event.inputs.OUTPUT_FORMAT }}  # ⭐ 新增：输出格式
       
       # 登录相关secrets
       JM_USERNAME: ${{ secrets.JM_USERNAME }}
@@ -100,13 +100,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          # ⭐ 只在需要PDF时安装 img2pdf
-          if [ "$OUTPUT_FORMAT" == "只保留PDF（删除原图）" ]; then
-            pip install img2pdf
-            echo "✅ 已安装 img2pdf 插件"
-          else
-            echo "ℹ️ 跳过 img2pdf 安装（只保留原图模式）"
-          fi
+          
+      # ⭐ 修改：根据选择决定是否安装 img2pdf
+      - name: 安装 img2pdf（仅PDF模式）
+        if: ${{ github.event.inputs.OUTPUT_FORMAT == 'pdf_only' }}
+        run: |
+          pip install img2pdf
+          echo "✅ 已安装 img2pdf（PDF转换模式）"
           
       - name: 安装jmcomic（pip）
         if: ${{ github.ref != 'refs/heads/dev' }}
@@ -117,6 +117,41 @@ jobs:
         if: ${{ github.ref == 'refs/heads/dev' }}
         run: |
           pip install -e ./
+          
+      # ⭐ 新增：显示当前输出模式
+      - name: 显示输出模式
+        run: |
+          echo "========================================"
+          echo "📦 输出模式配置"
+          echo "========================================"
+          if [ "$OUTPUT_FORMAT" = "pdf_only" ]; then
+            echo "📄 模式: 只保留PDF（将删除原始图片）"
+            echo "   - ✅ 启用 PDF 转换"
+            echo "   - ❌ 最终删除原始图片"
+          else
+            echo "🖼️  模式: 只保留原图（不进行PDF转换）"
+            echo "   - ❌ 不进行 PDF 转换"
+            echo "   - ✅ 保留原始图片"
+          fi
+          echo "========================================"
+          
+      # ⭐ 新增：根据模式修改配置文件
+      - name: 配置下载选项
+        run: |
+          CONFIG_FILE="assets/option/option_workflow_download.yml"
+          
+          if [ "$OUTPUT_FORMAT" = "images_only" ]; then
+            # 只保留原图模式：注释掉 img2pdf 插件
+            echo "🔧 禁用 PDF 转换插件..."
+            sed -i '/after_album:/,/pdf_dir:/ s/^/#/' "$CONFIG_FILE"
+            sed -i '/filename_rule: Aname/,/^  after_download:/ s/^/#/' "$CONFIG_FILE"
+            echo "✅ 已禁用 PDF 转换"
+          else
+            echo "✅ 保持 PDF 转换插件启用"
+          fi
+          
+          echo "当前配置文件内容："
+          cat "$CONFIG_FILE"
           
       - name: 检查邮件配置
         run: |
@@ -162,96 +197,86 @@ jobs:
             echo "✅ 邮件配置完整，下载完成后将发送邮件"
           fi
           
-      # ⭐ 修改配置文件，根据选项决定是否启用PDF转换
-      - name: 配置输出格式
-        run: |
-          echo "========================================"
-          echo "⚙️  输出格式配置"
-          echo "========================================"
-          echo "当前选择: $OUTPUT_FORMAT"
-          
-          if [ "$OUTPUT_FORMAT" == "只保留原图（不转PDF）" ]; then
-            echo "ℹ️ 禁用 img2pdf 插件..."
-            # 注释掉配置文件中的 img2pdf 插件
-            sed -i 's/^  after_album:/#  after_album:/g' assets/option/option_workflow_download.yml
-            sed -i 's/^    - plugin: img2pdf/#    - plugin: img2pdf/g' assets/option/option_workflow_download.yml
-            sed -i 's/^      kwargs:/#      kwargs:/g' assets/option/option_workflow_download.yml
-            sed -i 's/^        pdf_dir:/#        pdf_dir:/g' assets/option/option_workflow_download.yml
-            sed -i 's/^        filename_rule:/#        filename_rule:/g' assets/option/option_workflow_download.yml
-            echo "✅ 已禁用 PDF 转换，将只保留原始图片"
-          else
-            echo "✅ 启用 PDF 转换模式"
-          fi
-          echo "========================================"
-          
       - name: 运行下载脚本
         run: |
           cd ./usage/
           python workflow_download.py
           
-      # ⭐ 修改：根据选项处理文件
+      # ⭐ 修改：根据模式处理文件
       - name: 处理输出文件
         run: |
           cd $JM_DOWNLOAD_DIR
           
-          if [ "$OUTPUT_FORMAT" == "只保留PDF（删除原图）" ]; then
-            echo "========================================"
-            echo "🗑️  清理原始图片（只保留PDF）"
-            echo "========================================"
+          if [ "$OUTPUT_FORMAT" = "pdf_only" ]; then
+            echo "📄 处理模式：只保留PDF"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            
+            # 统计原始文件
+            IMAGE_COUNT=$(find . -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" -o -name "*.webp" \) | wc -l)
+            echo "📊 原始图片数量: $IMAGE_COUNT"
             
             # 删除原始图片
             find . -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" -o -name "*.webp" \) -delete
             rm -f 【出错了】*.log
             find . -type d -empty -delete
             
-            echo "✅ 已清理原始图片，只保留PDF"
+            echo "✅ 已删除原始图片，只保留PDF文件"
             
-          elif [ "$OUTPUT_FORMAT" == "只保留原图（不转PDF）" ]; then
-            echo "========================================"
-            echo "🗑️  清理PDF文件（只保留原图）"
-            echo "========================================"
+          elif [ "$OUTPUT_FORMAT" = "images_only" ]; then
+            echo "🖼️  处理模式：只保留原图"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             
-            # 删除PDF目录
-            if [ -d "pdf" ]; then
-              rm -rf pdf
-              echo "✅ 已删除 PDF 目录"
-            else
-              echo "ℹ️ PDF 目录不存在（符合预期）"
-            fi
-            
-            echo "✅ 保留原始图片，未生成PDF"
-          fi
-          
-          echo "========================================"
-          
-      - name: 检查最终文件
-        run: |
-          echo "========================================"
-          echo "📁 最终文件检查"
-          echo "========================================"
-          
-          cd $JM_DOWNLOAD_DIR
-          
-          if [ "$OUTPUT_FORMAT" == "只保留PDF（删除原图）" ]; then
+            # 删除PDF目录（如果存在）
             if [ -d "pdf" ]; then
               PDF_COUNT=$(find pdf -name "*.pdf" 2>/dev/null | wc -l)
-              echo "📄 PDF文件数量: $PDF_COUNT"
-              echo ""
-              echo "PDF文件列表:"
-              find pdf -name "*.pdf" -exec ls -lh {} \; 2>/dev/null || echo "无PDF文件"
-              echo ""
-              echo "PDF总大小: $(du -sh pdf 2>/dev/null | cut -f1 || echo '0')"
-            else
-              echo "❌ PDF目录不存在"
+              echo "📊 删除 PDF 文件数量: $PDF_COUNT"
+              rm -rf pdf
             fi
-          else
-            IMAGE_COUNT=$(find . -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" -o -name "*.webp" \) 2>/dev/null | wc -l)
-            echo "🖼️  图片文件数量: $IMAGE_COUNT"
-            echo ""
-            echo "下载目录结构:"
-            tree -L 2 -h . 2>/dev/null || ls -lhR .
-            echo ""
-            echo "总大小: $(du -sh . | cut -f1)"
+            
+            # 统计保留的图片
+            IMAGE_COUNT=$(find . -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" -o -name "*.webp" \) | wc -l)
+            echo "📊 保留的图片数量: $IMAGE_COUNT"
+            
+            rm -f 【出错了】*.log
+            find . -type d -empty -delete
+            
+            echo "✅ 已删除PDF文件，只保留原始图片"
+          fi
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📦 最终文件统计："
+          du -sh . 2>/dev/null | awk '{print "总大小: " $1}'
+          find . -type f | wc -l | awk '{print "文件数量: " $1}'
+          
+      # ⭐ 修改：根据模式检查文件
+      - name: 检查输出文件
+        run: |
+          echo "========================================"
+          echo "📂 文件检查"
+          echo "========================================"
+          
+          if [ "$OUTPUT_FORMAT" = "pdf_only" ]; then
+            if [ -d "$JM_DOWNLOAD_DIR/pdf" ]; then
+              PDF_COUNT=$(find $JM_DOWNLOAD_DIR/pdf -name "*.pdf" 2>/dev/null | wc -l)
+              echo "✅ PDF模式 - PDF文件数量: $PDF_COUNT"
+              if [ $PDF_COUNT -gt 0 ]; then
+                echo ""
+                echo "PDF文件列表:"
+                find $JM_DOWNLOAD_DIR/pdf -name "*.pdf" -exec ls -lh {} \;
+                echo ""
+                echo "PDF总大小: $(du -sh $JM_DOWNLOAD_DIR/pdf 2>/dev/null | cut -f1)"
+              fi
+            else
+              echo "⚠️  警告: PDF目录不存在"
+            fi
+            
+          elif [ "$OUTPUT_FORMAT" = "images_only" ]; then
+            IMAGE_COUNT=$(find $JM_DOWNLOAD_DIR -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" -o -name "*.webp" \) | wc -l)
+            echo "✅ 原图模式 - 图片文件数量: $IMAGE_COUNT"
+            if [ $IMAGE_COUNT -gt 0 ]; then
+              echo ""
+              echo "图片总大小: $(du -sh $JM_DOWNLOAD_DIR 2>/dev/null | cut -f1)"
+            fi
           fi
           
           echo "========================================"
@@ -270,10 +295,19 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           
+      # ⭐ 修改：邮件通知（适配不同模式）
       - name: 发送邮件通知
         if: ${{ env.EMAIL_TO != '' && env.EMAIL_FROM != '' && env.EMAIL_PASS != '' }}
         continue-on-error: true
         run: |
           echo "📧 准备发送邮件..."
+          
+          # 根据模式调整邮件内容
+          if [ "$OUTPUT_FORMAT" = "pdf_only" ]; then
+            echo "模式：PDF文件"
+          else
+            echo "模式：原始图片"
+          fi
+          
           python assets/send_email_with_pdf.py
           echo "✅ 邮件任务完成"
