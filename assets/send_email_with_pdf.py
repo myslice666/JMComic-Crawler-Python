@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 QQ 邮箱附件发送脚本
-支持 PDF 模式和原图模式的邮件发送（原图模式仅展示本子名称）
+支持 PDF 模式和原图模式的邮件发送（修复原图模式目录识别问题）
 """
 
 import os
@@ -72,48 +72,52 @@ def scan_files(base_dir, file_extensions):
 
 
 def get_album_info(base_dir):
-    """从下载目录提取本子信息（名称、图片数量、总大小）- 用于原图模式"""
+    """从下载目录提取本子信息（优化：兼容任意目录结构，按图片存在性判断）- 用于原图模式"""
     base_path = Path(base_dir)
     if not base_path.exists():
         log(f"目录不存在: {base_dir}", 'WARNING')
         return []
     
     album_list = []
-    # 按 dir_rule: Bd_Aauthor_Atitle_Pindex 匹配本子目录（含Aauthor/Atitle）
-    for album_dir in base_path.glob('*_A*_*'):
-        if not album_dir.is_dir():
-            continue
+    image_extensions = ['.jpg', '.jpeg', '.png', '.webp']
+    
+    # 遍历所有子目录（不再依赖 *_A*_* 固定格式，更通用）
+    for potential_album_dir in base_path.iterdir():
+        if not potential_album_dir.is_dir():
+            continue  # 只处理目录
         
-        # 解析本子名称：从目录名分割结果中提取Atitle
-        dir_parts = album_dir.name.split('_')
+        # 检查当前目录下是否有图片文件（有则视为本子目录）
+        image_files = list(potential_album_dir.rglob('*'))
+        image_files = [f for f in image_files if f.suffix.lower() in image_extensions]
+        if not image_files:
+            continue  # 无图片则跳过
+        
+        # 解析本子名称：优先从目录名提取（兼容原 dir_rule 结构，无则用目录名本身）
+        dir_name = potential_album_dir.name
+        album_name = dir_name  # 默认用目录名作为本子名
+        dir_parts = dir_name.split('_')
+        
+        # 尝试提取 Atitle（兼容原 dir_rule: Bd_Aauthor_Atitle_Pindex）
         atitle_index = None
-        
-        # 优先匹配明确的Atitle片段
+        # 1. 优先匹配明确的 Atitle 片段（如 Atitle_xxx）
         for i, part in enumerate(dir_parts):
             if part.startswith('A') and 'title' in part.lower():
                 atitle_index = i
                 break
-        
-        # 兼容无明确Atitle的情况（取Aauthor后的片段）
+        # 2. 兼容 Aauthor 后的片段（如 Aauthor_xxx_Atitle）
         if atitle_index is None:
             for i, part in enumerate(dir_parts):
                 if part.startswith('Aauthor'):
                     atitle_index = i + 1
                     break
         
-        # 处理本子名称（默认"未知本子"）
-        album_name = '未知本子'
+        # 若找到 Atitle 相关片段，重构本子名（排除 Pindex 章节号）
         if atitle_index and atitle_index < len(dir_parts):
-            # 拼接Atitle片段，排除Pindex（章节号）
-            album_name = '_'.join([p for p in dir_parts[atitle_index:] if not p.startswith('P')])
+            album_name_parts = [p for p in dir_parts[atitle_index:] if not p.startswith('P')]
+            if album_name_parts:  # 确保有有效片段
+                album_name = '_'.join(album_name_parts)
         
-        # 统计当前本子的图片信息
-        image_extensions = ['.jpg', '.jpeg', '.png', '.webp']
-        image_files = [f for f in album_dir.rglob('*') if f.suffix.lower() in image_extensions]
-        if not image_files:
-            continue
-        
-        # 计算图片总数和总大小
+        # 统计本子的图片信息
         total_image_count = len(image_files)
         total_size_mb = round(sum(f.stat().st_size for f in image_files) / (1024 * 1024), 1)
         
@@ -121,7 +125,19 @@ def get_album_info(base_dir):
             'name': album_name,
             'image_count': total_image_count,
             'total_size_mb': total_size_mb,
-            'dir_path': str(album_dir)
+            'dir_path': str(potential_album_dir)
+        })
+    
+    # 若根目录有图片（无子目录场景），视为一个本子
+    root_image_files = [f for f in base_path.rglob('*') if f.suffix.lower() in image_extensions and f.parent == base_path]
+    if root_image_files and not album_list:
+        total_image_count = len(root_image_files)
+        total_size_mb = round(sum(f.stat().st_size for f in root_image_files) / (1024 * 1024), 1)
+        album_list.append({
+            'name': '根目录本子',
+            'image_count': total_image_count,
+            'total_size_mb': total_size_mb,
+            'dir_path': str(base_path)
         })
     
     return album_list
@@ -193,24 +209,30 @@ def build_email_content_pdf(pdf_files, zip_size_mb, is_large_file, zip_name):
 
 
 def build_email_content_images(album_list, archive_size_mb, is_large_file, archive_name):
-    """构建原图模式的邮件正文（仅展示本子名称）"""
+    """构建原图模式的邮件正文（优化：空数据场景提示更清晰）"""
     today = datetime.now().strftime('%Y-%m-%d')
     total_album_count = len(album_list)
-    total_image_count = sum(album['image_count'] for album in album_list)
+    total_image_count = sum(album['image_count'] for album in album_list) if album_list else 0
     
-    # 标题（对齐PDF模式风格）
+    # 标题（空数据时调整表述）
     if EMAIL_TITLE:
         title = EMAIL_TITLE
     else:
-        title = f"禁漫原图已下载（共 {total_album_count} 本 · {today}）"
+        if total_album_count > 0:
+            title = f"禁漫原图已下载（共 {total_album_count} 本 · {today}）"
+        else:
+            title = f"禁漫下载任务完成（原图模式 · {today}）"
     
-    # 正文
+    # 正文（空数据时明确提示）
     if EMAIL_CONTENT:
         content = EMAIL_CONTENT + "\n\n"
     else:
-        content = "✅ 你的禁漫原图文件已准备就绪！\n\n"
+        if total_album_count > 0:
+            content = "✅ 你的禁漫原图文件已准备就绪！\n\n"
+        else:
+            content = "ℹ️ 禁漫下载任务已完成（原图模式），但未识别到具体本子或图片文件。\n\n"
     
-    # 本子列表（仅展示本子名称+图片数量+总大小）
+    # 本子列表（有数据时展示，空数据时跳过）
     if album_list:
         content += f"{'=' * 50}\n"
         content += f"🖼️  共 {total_album_count} 本本子：\n"
@@ -219,21 +241,28 @@ def build_email_content_images(album_list, archive_size_mb, is_large_file, archi
             content += f"  • {album['name']}（{album['image_count']} 张图 · {album['total_size_mb']} MB）\n"
         content += f"{'=' * 50}\n\n"
     
-    # 统计信息
+    # 统计信息（空数据时简化）
     content += f"{'=' * 50}\n"
     content += f"📊 原图模式统计：\n"
     content += f"{'=' * 50}\n"
-    content += f"  • 本子总数: {total_album_count} 本\n"
-    content += f"  • 图片总数: {total_image_count} 张\n"
-    content += f"  • 所有图片总大小: {sum(a['total_size_mb'] for a in album_list):.1f} MB\n"
+    if album_list:
+        content += f"  • 本子总数: {total_album_count} 本\n"
+        content += f"  • 图片总数: {total_image_count} 张\n"
+        content += f"  • 所有图片总大小: {sum(a['total_size_mb'] for a in album_list):.1f} MB\n"
+    else:
+        content += f"  • 本子总数: 0 本\n"
+        content += f"  • 图片总数: 0 张\n"
     content += f"{'=' * 50}\n\n"
     
-    # 压缩包提示
-    if is_large_file:
-        content += f"⚠️ 压缩包超过 {ATTACH_LIMIT_MB} MB，请前往 GitHub Actions 的 Artifacts 下载\n"
-        content += f"📦 压缩包: {archive_name} ({archive_size_mb} MB)\n"
+    # 压缩包提示（空数据时仍显示压缩包信息）
+    if os.path.exists(Path(JM_DOWNLOAD_DIR) / archive_name):
+        if is_large_file:
+            content += f"⚠️ 压缩包超过 {ATTACH_LIMIT_MB} MB，请前往 GitHub Actions 的 Artifacts 下载\n"
+            content += f"📦 压缩包: {archive_name} ({archive_size_mb} MB)\n"
+        else:
+            content += f"📦 压缩包: {archive_name} ({archive_size_mb} MB)（无有效图片文件）\n"
     else:
-        content += f"📦 附件已打包为 {archive_name} ({archive_size_mb} MB)\n"
+        content += f"⚠️ 未找到压缩包: {archive_name}\n"
     
     # 统一结尾标识
     content += "\n—— GitHub Actions 自动服务"
@@ -355,16 +384,20 @@ def handle_pdf_mode():
 
 
 def handle_images_mode():
-    """处理原图模式（仅展示本子名称）"""
+    """处理原图模式（优化：空数据场景处理更友好）"""
     log("🖼️ 当前模式: 原图模式")
     
-    # 提取本子信息（替代单张图片扫描）
-    log(f"📁 扫描本子目录: {JM_DOWNLOAD_DIR}")
+    # 提取本子信息（优化后：兼容任意目录结构）
+    log(f"📁 扫描本子目录: {JM_DOWNLOAD_DIR}（兼容任意目录结构）")
     album_list = get_album_info(JM_DOWNLOAD_DIR)
     
     if not album_list:
-        log("⚠️ 未找到本子目录或图片", 'WARNING')
-        return None, None, None, []
+        log("⚠️ 未找到包含图片的本子目录（或根目录无图片）", 'WARNING')
+        # 即使无本子信息，仍检查压缩包（避免直接返回None）
+        archive_path = Path(JM_DOWNLOAD_DIR) / ZIP_NAME
+        archive_size_mb = get_file_size_mb(archive_path) if archive_path.exists() else 0
+        is_large_file = archive_size_mb > ATTACH_LIMIT_MB if archive_path.exists() else False
+        return archive_path if archive_path.exists() else None, archive_size_mb, is_large_file, album_list
     
     # 显示本子列表
     log(f"✅ 找到 {len(album_list)} 本本子:")
@@ -377,7 +410,7 @@ def handle_images_mode():
     archive_path = Path(JM_DOWNLOAD_DIR) / ZIP_NAME
     if not archive_path.exists():
         log(f"⚠️ 未找到压缩包: {ZIP_NAME}", 'WARNING')
-        return None, None, None, album_list
+        return None, 0, False, album_list
     
     # 检查压缩包大小
     archive_size_mb = get_file_size_mb(archive_path)
@@ -411,17 +444,17 @@ def main():
     if OUTPUT_FORMAT == 'images_only':
         attachment_path, size_mb, is_large, album_list = handle_images_mode()
         
-        if attachment_path is None:
-            # 发送失败通知
-            title = f"禁漫下载任务完成 · {datetime.now().strftime('%Y-%m-%d')}"
-            content = "下载任务已完成，但未找到压缩包文件。\n\n—— GitHub Actions 自动服务"
-            send_email(title, content)
-            return 0
-        
-        # 构建原图模式邮件内容
+        # 构建原图模式邮件内容（无论是否有本子信息，都生成清晰提示）
         title, content = build_email_content_images(
             album_list, size_mb, is_large, ZIP_NAME
         )
+        
+        # 发送邮件（即使无附件也发送通知）
+        log("=" * 60)
+        if is_large or not attachment_path:
+            success = send_email(title, content)
+        else:
+            success = send_email(title, content, attachment_path)
         
     else:  # pdf_only
         attachment_path, size_mb, is_large, pdf_files = handle_pdf_mode()
@@ -438,13 +471,13 @@ def main():
         title, content = build_email_content_pdf(
             pdf_files, size_mb, is_large, zip_name
         )
-    
-    # 发送邮件
-    log("=" * 60)
-    if is_large:
-        success = send_email(title, content)  # 超大文件不附加
-    else:
-        success = send_email(title, content, attachment_path)
+        
+        # 发送邮件
+        log("=" * 60)
+        if is_large:
+            success = send_email(title, content)  # 超大文件不附加
+        else:
+            success = send_email(title, content, attachment_path)
     
     log("=" * 60)
     
