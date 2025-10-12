@@ -183,7 +183,28 @@ jobs:
           rm -f 【出错了】*.log
           find . -type d -empty -delete
           echo "✅ 已清理原始图片，只保留PDF"
+          # ⭐ 检查PDF文件
           
+      - name: 检查PDF文件
+        run: |
+          echo "========================================"
+          echo "📄 PDF文件检查"
+          echo "========================================"
+          
+          if [ -d "$JM_DOWNLOAD_DIR/pdf" ]; then
+            PDF_COUNT=$(find $JM_DOWNLOAD_DIR/pdf -name "*.pdf" | wc -l)
+            echo "PDF文件数量: $PDF_COUNT"
+            echo ""
+            echo "PDF文件列表:"
+            find $JM_DOWNLOAD_DIR/pdf -name "*.pdf" -exec ls -lh {} \;
+            echo ""
+            echo "总大小: $(du -sh $JM_DOWNLOAD_DIR/pdf | cut -f1)"
+          else
+            echo "❌ PDF目录不存在"
+          fi
+          echo "========================================"
+
+
       - name: 压缩文件
         run: |
           cd $JM_DOWNLOAD_DIR
