@@ -21,7 +21,7 @@ from datetime import datetime
 # ============================================
 SMTP_HOST = 'smtp.qq.com'
 SMTP_PORT = 465
-ATTACH_LIMIT_MB = 45  # QQ 邮箱附件大小限制（MB）
+ATTACH_LIMIT_MB = 1024  # QQ 邮箱附件大小限制（MB）
 MAX_RETRIES = 3  # 发送失败重试次数
 RETRY_DELAY = 3  # 重试间隔（秒）
 ZIP_NAME = 'all_pdf.zip'  # 压缩包名称
@@ -138,6 +138,7 @@ def build_email_content(pdf_files, zip_size_mb, is_large_file):
 
 def send_email(title, content, zip_path=None, retry_count=0):
     """发送邮件（支持重试）"""
+    smtp_conn = None
     try:
         # 创建邮件对象
         msg = MIMEMultipart()
@@ -164,12 +165,21 @@ def send_email(title, content, zip_path=None, retry_count=0):
         
         # 连接 SMTP 服务器并发送
         log("正在连接 SMTP 服务器...")
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as smtp:
-            smtp.login(EMAIL_FROM, EMAIL_PASS)
-            log("✅ SMTP 登录成功")
-            smtp.send_message(msg)
-            log("✅ 邮件发送成功")
-            return True
+        smtp_conn = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=60)
+        smtp_conn.login(EMAIL_FROM, EMAIL_PASS)
+        log("✅ SMTP 登录成功")
+        
+        # 发送邮件
+        smtp_conn.send_message(msg)
+        log("✅ 邮件发送成功")
+        
+        # 关闭连接（忽略关闭时的错误）
+        try:
+            smtp_conn.quit()
+        except:
+            pass
+        
+        return True
             
     except smtplib.SMTPAuthenticationError:
         log("❌ SMTP 认证失败，请检查邮箱授权码", 'ERROR')
@@ -177,6 +187,13 @@ def send_email(title, content, zip_path=None, retry_count=0):
         
     except Exception as e:
         log(f"❌ 邮件发送失败: {e}", 'ERROR')
+        
+        # 确保连接关闭
+        if smtp_conn:
+            try:
+                smtp_conn.quit()
+            except:
+                pass
         
         # 自动重试
         if retry_count < MAX_RETRIES:
