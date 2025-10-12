@@ -41,3 +41,6 @@ plugins:
         password: ${EMAIL_PASS}
         title: ${EMAIL_TITLE}
         content: ${EMAIL_CONTENT}
+           # ⭐ 添加附件配置
+        attachment_dir: ${JM_DOWNLOAD_DIR}/pdf/  
+        # PDF文件夹路径
