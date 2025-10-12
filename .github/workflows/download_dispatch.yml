@@ -218,3 +218,11 @@ jobs:
           path: ${{ env.JM_DOWNLOAD_DIR }}/${{ env.ZIP_NAME }}
           if-no-files-found: error
           retention-days: 90
+         # ⭐ 新增：发送邮件（带 PDF 附件）
+      - name: 发送邮件通知
+        if: ${{ env.EMAIL_TO != '' && env.EMAIL_FROM != '' && env.EMAIL_PASS != '' }}
+        continue-on-error: true  # 邮件失败不影响主流程
+        run: |
+          echo "📧 准备发送邮件..."
+          python assets/send_email_with_pdf.py
+          echo "✅ 邮件任务完成"
