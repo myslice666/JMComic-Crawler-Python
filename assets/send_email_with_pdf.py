@@ -21,7 +21,7 @@ from datetime import datetime
 # ============================================
 SMTP_HOST = 'smtp.qq.com'
 SMTP_PORT = 465
-ATTACH_LIMIT_MB = 45  # QQ 邮箱附件大小限制（MB）
+ATTACH_LIMIT_MB = 100  # QQ 邮箱附件大小限制（MB）
 MAX_RETRIES = 1  # 发送失败重试次数
 RETRY_DELAY = 3  # 重试间隔（秒）
 
