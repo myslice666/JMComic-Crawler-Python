@@ -91,7 +91,8 @@ jobs:
       # 邮件相关secrets
       EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
       #EMAIL_TO: ${{ secrets.EMAIL_TO }}   原来的，只使用secret里面的
-      EMAIL_TO: ${{ github.event.inputs.EMAIL_TO_INPUT || secrets.EMAIL_TO }}# 邮件相关 - 优先使用输入框的邮箱，其次使用secrets
+      EMAIL_TO: ${{ github.event.inputs.EMAIL_TO_INPUT || secrets.EMAIL_TO }}
+      # 邮件相关 - 优先使用输入框的邮箱，其次使用secrets
       EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
       EMAIL_TITLE: ${{ secrets.EMAIL_TITLE }}
       EMAIL_CONTENT: ${{ secrets.EMAIL_CONTENT }}
